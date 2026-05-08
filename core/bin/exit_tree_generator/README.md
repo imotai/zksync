@@ -1,167 +1,124 @@
 # Exit Tree Generator
 
-This tool is designed to help users withdraw their tokens from zkSync Lite using an exit tree. It provides functionality
-to restore the zkSync Merkle tree state, generate new leaves for the exit tree, calculate Merkle roots, and create
-proofs for claiming funds.
+> **⚠️ Deprecation Notice**
+>
+> ZKSync Lite is being deprecated. To withdraw your funds, please visit
+> [lite.zksync.io](https://lite.zksync.io).
+>
+> This tool is provided for users who wish to generate their own withdrawal proofs independently, or to verify the
+> exit tree against the on-chain state.
 
-## Overview
+This tool helps users withdraw their tokens from ZKSync Lite using an exit Merkle tree. It restores the ZKSync Lite
+state, generates the exit tree leaves, calculates Merkle roots, and produces proofs that can be submitted to the
+withdrawal contract to claim funds.
 
-The exit tree generator processes account and balance data from zkSync Lite to create a Merkle tree that enables users
-to claim their funds through a smart contract. The tool primarily supports simple workflows for users who just need to
-generate proofs, with additional advanced workflows available for full tree restoration and verification.
+## How `exit_tree_generator` Works
 
-## Input Files
+The withdrawal flow has three steps:
 
-MatterLabs provides the following CSV files containing the state of zkSync Lite at the last verified block:
+### 1. Download the data
 
-### 1. `accounts.csv`
+Download the snapshot of the ZKSync Lite state at the last verified block from:
 
-Contains the account state for the last verified block. Each row includes:
+https://zksync-lite-sunset.matterlabs.dev/mainnet/data.zip
 
-- Account ID
-- Nonce
-- Ethereum address
-- Public key hash
+or IPFS CID:
+QmSqzPQNRcz3grznTMCYDDunDFGZCXFFjew7fgYpFcGYoh
 
-### 2. `balances.csv`
+The archive contains:
 
-Contains the balance information for each account and token combination. Each row includes:
+- `accounts.csv` — account state (account ID, nonce, Ethereum address, public key hash)
+- `balances.csv` — balances per account/token (account ID, token ID, balance)
+- `tokens.csv` — token ID → Ethereum address mapping
 
-- Account ID
-- Token ID (coin ID)
-- Balance amount
+Place these files in the working directory before running any of the commands below.
 
-### 3. `tokens.csv`
+### 2. Create leaves for the Keccak tree
 
-Maps token IDs to their Ethereum token addresses. This file includes both fungible and non-fungible tokens.
-**Important:** You must use the `tokens.csv` file provided by MatterLabs when creating new leaves, as it contains NFT
-addresses that are required for proper tree generation. For non-fungible tokens, you can verify token IDs using the
-`restore-token-ids` command.
-
-## Usage
-
-The tool provides two usage modes: **Regular** (for simple proof generation) and **Advanced** (for full tree restoration
-and verification).
-
-### Regular Usage
-
-For regular users who just need to generate proofs from an existing `new_leaves.csv` file:
-
-#### Calculate Merkle Root
+To generate the leaves from `accounts.csv`, `balances.csv`, and `tokens.csv`:
 
 ```bash
-cargo run --bin zksync_exit_tree_generator -- calculate-root-for-keccak-tree \
-    [new_leaves.csv]
-```
-
-#### Create Proof
-
-```bash
-cargo run --bin zksync_exit_tree_generator -- create-proof \
-    --account <ACCOUNT_ADDRESS> \
-    --tokens <TOKEN_ADDRESS_1> [<TOKEN_ADDRESS_2> ...] \
-    [new_leaves.csv]
-```
-
-You can provide multiple token addresses to create a proof for multiple tokens at once. The proof will be printed as a
-hex-encoded string that can be used with the withdrawal contract.
-
-### Advanced Usage
-
-For advanced users who want to restore the entire tree and verify the process:
-
-#### Step 1: Restore Token IDs (Optional)
-
-If you need to verify or restore token IDs for non-fungible tokens:
-
-```bash
-cargo run --bin zksync_exit_tree_generator -- restore-token-ids \
-    --web3 <WEB3_URL> \
-    --config <CONFIG_PATH>
-```
-
-This will restore token IDs and save them to `restored_tokens.csv`.
-
-#### Step 2: Restore the Tree
-
-Restore the root hash of the latest block on zkSync Lite from the provided CSV files:
-
-```bash
-cargo run --bin zksync_exit_tree_generator -- restore-zksync-tree \
-    --accounts accounts.csv \
-    --balances balances.csv
-```
-
-**Note:** This operation takes approximately 6 hours to complete.
-
-The command will output the restored tree root hash, which you can validate against the zkSync contract.
-
-#### Step 3: Create New Leaves
-
-Generate new leaves for the exit tree:
-
-```bash
-cargo run --bin zksync_exit_tree_generator -- create-new-leaves \
+cargo run --release --bin zksync_exit_tree_generator -- create-new-leaves \
     --accounts accounts.csv \
     --balances balances.csv \
     --tokens tokens.csv \
     [--output new_leaves.csv]
 ```
 
-**Important:** You must use the `tokens.csv` file provided by MatterLabs for this step, as it contains NFT addresses
-that are essential for generating the correct leaves.
+### 3. Create a proof and claim
 
-This creates a file (default: `new_leaves.csv`) that contains the leaves needed to calculate the Merkle root and Merkle
-paths for the new tree.
-
-#### Step 4: Calculate and Verify Merkle Root
-
-Calculate the Merkle root for the Keccak tree:
+Generate a Merkle proof for your account and the token(s) you want to withdraw:
 
 ```bash
-cargo run --bin zksync_exit_tree_generator -- calculate-root-for-keccak-tree \
-    [new_leaves.csv]
-```
-
-This root will be published on-chain and can be used to verify the tree integrity.
-
-#### Step 5: Create Proof for Claiming Funds
-
-Generate a Merkle proof for a specific account and one or more tokens:
-
-```bash
-cargo run --bin zksync_exit_tree_generator -- create-proof \
-    --account <ACCOUNT_ADDRESS> \
+cargo run --release --bin zksync_exit_tree_generator -- create-proof \
+    --account <YOUR_ACCOUNT_ADDRESS> \
     --tokens <TOKEN_ADDRESS_1> [<TOKEN_ADDRESS_2> ...] \
     [new_leaves.csv]
 ```
 
-You can provide multiple token addresses to create a proof for multiple tokens at once. The proof can then be sent to
-the smart contract to withdraw funds.
+You can pass multiple token addresses in one invocation to produce a single combined proof. The proof is printed as a
+hex-encoded string.
+
+Submit the printed proof to the withdrawal contract.
+
+**Mainnet:**: https://etherscan.io/address/0x0a14b696350546110a0d8acdb86226983af9d2a0
+
+The contract exposes two methods for claiming:
+
+- **`claim`** — withdraws the funds to the caller (`msg.sender`). Use this when the wallet submitting the
+  transaction is the address that held the ZKSync Lite account.
+- **`claimTo`** — withdraws the funds to a specified recipient address. Use this when you want the funds sent
+  somewhere other than the caller (for example, a cold wallet or a different EOA).
+
+Both methods take the account address, the token addresses, and the proof produced in step 3. You can
+call them from Etherscan's "Write Contract" tab, or from any wallet/script that can encode a contract call.
+
+## Advanced
+
+These workflows are for users who want to independently verify the exit tree rather than trust the published data.
+
+### Calculating the Keccak Merkle root
+
+The Keccak tree is the exit tree used by the withdrawal contract. Its root is published on-chain. You can recompute
+it locally from `new_leaves.csv` and compare:
+
+```bash
+cargo run --release --bin zksync_exit_tree_generator -- calculate-root-for-keccak-tree \
+    [new_leaves.csv]
+```
+
+This is fast and runs in memory.
+
+### Calculating the original ZKSync Merkle root
+
+The original ZKSync Lite Merkle tree (Rescue-based) can be reconstructed from `accounts.csv` and `balances.csv`. Its
+root matches the state root of the last verified block on the ZKSync Lite contract, so this is the strongest possible
+verification that the snapshot data is authentic.
+
+```bash
+cargo run --release --bin zksync_exit_tree_generator -- restore-zksync-tree \
+    --accounts accounts.csv \
+    --balances balances.csv
+```
+
+> **Heads up:** This is a heavy computational task. It takes approximately **6 hours** on a typical machine and uses
+> significant memory. Intermediate node hashes are written to `internals.txt` to speed up subsequent runs.
+
+The command prints the restored root hash, which you can compare against the value reported by the ZKSync Lite
+contract.
+
+
+### Restoring the tree from a database
+
+For users with direct access to the original database state:
+
+```bash
+cargo run --release --features postgres --bin zksync_exit_tree_generator -- restore-tree-from-db
+```
+
+Requires the `postgres` feature flag and a `DATABASE_URL` environment variable.
 
 ## Commands Reference
-
-### `restore-token-ids`
-
-Restores token IDs by querying the Ethereum blockchain.
-
-**Options:**
-
-- `--web3 <WEB3_URL>`: Web3 API URL (optional, uses env config if not provided)
-- `--config <CONFIG_PATH>`: Path to configuration file (optional, uses env config if not provided)
-
-**Output:** `restored_tokens.csv`
-
-### `restore-zksync-tree`
-
-Restores the zkSync Merkle tree from CSV files and calculates the root hash.
-
-**Options:**
-
-- `--accounts <PATH>`: Path to accounts CSV file (required)
-- `--balances <PATH>`: Path to balances CSV file (required)
-
-**Output:** Prints the restored tree root hash
 
 ### `create-new-leaves`
 
@@ -171,21 +128,16 @@ Creates new leaves for the exit Merkle tree.
 
 - `--accounts <PATH>`: Path to accounts CSV file (required)
 - `--balances <PATH>`: Path to balances CSV file (required)
-- `--tokens <PATH>`: Path to tokens CSV file (required) - **Must use the tokens.csv provided by MatterLabs as it
-  contains NFT addresses**
+- `--tokens <PATH>`: Path to tokens CSV file (required) — must use the official snapshot's `tokens.csv`
 - `--output <PATH>`: Optional output file path (default: `new_leaves.csv`)
-
-**Output:** CSV file with Merkle tree leaves
 
 ### `calculate-root-for-keccak-tree`
 
-Calculates the Merkle root hash from the leaves file.
+Calculates the Keccak Merkle root from the leaves file.
 
 **Arguments:**
 
 - `<LEAVES_PATH>`: Path to leaves CSV file (optional, default: `new_leaves.csv`)
-
-**Output:** Prints the calculated Merkle root hash
 
 ### `create-proof`
 
@@ -197,28 +149,28 @@ Generates a Merkle proof for a specific account and one or more tokens.
 - `--tokens <ADDRESS>...`: Ethereum address(es) of the token(s) (required, can specify multiple)
 - `<LEAVES_PATH>`: Path to leaves CSV file (optional, default: `new_leaves.csv`)
 
-**Output:** Prints the hex-encoded Merkle proof
+### `restore-zksync-tree`
 
-**Note:** You can provide multiple token addresses to create a proof for multiple tokens in a single command.
+Restores the original ZKSync Lite Merkle tree and prints its root hash.
+
+**Options:**
+
+- `--accounts <PATH>`: Path to accounts CSV file (required)
+- `--balances <PATH>`: Path to balances CSV file (required)
+
 
 ### `restore-tree-from-db` (PostgreSQL feature)
 
-Restores the Merkle tree directly from the verified database state. Requires the `postgres` feature flag. DATABASE_URL
-environment variable must be set to connect to the PostgreSQL database.
-
-```bash
-cargo run --features postgres --bin zksync_exit_tree_generator -- restore-tree-from-db
-```
+Restores the Merkle tree directly from the verified database state. Requires the `postgres` feature flag and the
+`DATABASE_URL` environment variable.
 
 ## Building
-
-Build the tool:
 
 ```bash
 cargo build --release --bin zksync_exit_tree_generator
 ```
 
-For PostgreSQL support:
+With PostgreSQL support:
 
 ```bash
 cargo build --release --features postgres --bin zksync_exit_tree_generator
@@ -228,11 +180,11 @@ cargo build --release --features postgres --bin zksync_exit_tree_generator
 
 - `new_leaves.csv`: Default output file containing Merkle tree leaves
 - `restored_tokens.csv`: Output file from token ID restoration
-- `internals.txt`: Internal node hashes for speeding up further recalculation
+- `internals.txt`: Internal node hashes used to speed up subsequent tree recalculations
 
 ## Notes
 
-- The `restore-zksync-tree` operation is computationally intensive and takes approximately 6 hours
-- All addresses should be provided in standard Ethereum hex format (0x...)
-- Token addresses in `tokens.csv` includes both fungible and non-fungible tokens. But only fungible tokens are restored
-  from the blockchain in the `restore-token-ids` command.
+- All addresses should be provided in standard Ethereum hex format (`0x...`)
+- `tokens.csv` from the official snapshot includes both fungible and non-fungible tokens; only fungible tokens are
+  re-fetched by `restore-token-ids`
+- `restore-zksync-tree` is computationally intensive (~6 hours)
